@@ -154,13 +154,13 @@ fn main() -> ExitCode {
                     .expect("we just reloaded these policies");
 
                 for zone_name in &pol.zones {
-                    let zone = state
+                    let ZoneByName(zone) = state
                         .zones
                         .get(zone_name)
                         .expect("zones and policies are consistent");
 
-                    let mut state = zone.0.state.lock().expect("lock isn't poisoned");
-                    state.policy = Some(pol.latest.clone());
+                    // TODO: Mark these zones dirty.
+                    zone.state.write_cleanly().policy = Some(pol.latest.clone());
                 }
             }
 

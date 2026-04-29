@@ -25,7 +25,7 @@ use crate::{
     common::scheduler::Scheduler,
     loader::zone::EnqueuedRefresh,
     util::AbortOnDrop,
-    zone::{Zone, ZoneByPtr, ZoneHandle},
+    zone::{Zone, ZoneByName, ZoneByPtr},
 };
 
 mod server;
@@ -52,15 +52,8 @@ impl Loader {
     /// Initialize the loader, synchronously.
     pub fn init(center: &Arc<Center>, state: &mut State) {
         // Enqueue refreshes for all known zones.
-        for zone in &state.zones {
-            let mut state = zone.0.state.lock().unwrap();
-            ZoneHandle {
-                zone: &zone.0,
-                state: &mut state,
-                center,
-            }
-            .loader()
-            .enqueue_refresh(false);
+        for ZoneByName(zone) in &state.zones {
+            zone.write_handle(center).loader().enqueue_refresh(false);
         }
     }
 
@@ -70,30 +63,16 @@ impl Loader {
             center
                 .loader
                 .refresh_scheduler
-                .run(|_time, zone| {
+                .run(|_time, ZoneByPtr(zone)| {
                     // Enqueue a (soft) refresh for the zone.
-                    let mut state = zone.0.state.lock().unwrap();
-                    ZoneHandle {
-                        zone: &zone.0,
-                        state: &mut state,
-                        center: &center,
-                    }
-                    .loader()
-                    .enqueue_refresh(false);
+                    zone.write_handle(&center).loader().enqueue_refresh(false);
                 })
                 .await
         }))
     }
 
     pub fn on_refresh_zone(&self, center: &Arc<Center>, zone: &Arc<Zone>) {
-        let mut state = zone.state.lock().expect("lock is not poisoned");
-        ZoneHandle {
-            zone,
-            state: &mut state,
-            center,
-        }
-        .loader()
-        .enqueue_refresh(false);
+        zone.write_handle(center).loader().enqueue_refresh(false);
     }
 
     pub fn on_reload_zone(
@@ -101,20 +80,14 @@ impl Loader {
         center: &Arc<Center>,
         zone: &Arc<Zone>,
     ) -> Result<(), ZoneReloadError> {
-        let mut zone_state = zone.state.lock().expect("lock is not poisoned");
-        if let Some(reason) = zone_state.halted_reason() {
+        let mut handle = zone.write_handle(center);
+        if let Some(reason) = handle.state.halted_reason() {
             return Err(ZoneReloadError::ZoneHalted(reason));
         }
-        if let Source::None = zone_state.loader.source {
+        if let Source::None = handle.state.loader.source {
             return Err(ZoneReloadError::ZoneWithoutSource);
         }
-        ZoneHandle {
-            zone,
-            state: &mut zone_state,
-            center,
-        }
-        .loader()
-        .enqueue_refresh(true);
+        handle.loader().enqueue_refresh(true);
         Ok(())
     }
 }
@@ -175,12 +148,7 @@ async fn refresh(
         }
     };
 
-    let mut state = zone.state.lock().unwrap();
-    let mut handle = ZoneHandle {
-        zone: &zone,
-        state: &mut state,
-        center: &center,
-    };
+    let mut handle = zone.write_handle(&center);
 
     // Finalize the load metrics.
     let start_time = metrics.start.0;
@@ -231,7 +199,7 @@ async fn refresh(
             );
 
             // Cancel the load
-            handle.abandon_load(builder);
+            handle.get().abandon_load(builder);
         }
 
         Ok(true) => {
@@ -249,7 +217,7 @@ async fn refresh(
                 unreachable!("source-specific loading succeeded and must have filled 'builder'")
             });
 
-            handle.finish_load(built);
+            handle.get().finish_load(built);
         }
 
         Err(err) => {
@@ -259,7 +227,7 @@ async fn refresh(
             );
 
             // Cancel the load
-            handle.abandon_load(builder);
+            handle.get().abandon_load(builder);
         }
     }
 }

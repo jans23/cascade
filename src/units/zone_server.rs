@@ -36,8 +36,7 @@ use crate::manager::record_zone_event;
 use crate::server::{LoadedReviewServer, PublicationServer, SignedReviewServer};
 use crate::util::AbortOnDrop;
 use crate::zone::{
-    HistoricalEvent, SignedZoneVersionState, UnsignedZoneVersionState, Zone, ZoneHandle,
-    ZoneVersionReviewState,
+    HistoricalEvent, SignedZoneVersionState, UnsignedZoneVersionState, Zone, ZoneVersionReviewState,
 };
 
 /// The source of a zone server.
@@ -219,14 +218,13 @@ impl ZoneServer {
 
         // Move next_min_expiration to min_expiration, and determine policy.
         let policy = {
-            // Use a block to make sure that the mutex is clearly dropped.
-            let mut zone_state = zone.state.lock().unwrap();
+            // Use a block to make sure that the lock is clearly dropped.
+            let mut zone_state = zone.write(center);
 
             // Save as next_min_expiration. After the signed zone is approved
             // this value should be move to min_expiration.
             zone_state.min_expiration = zone_state.next_min_expiration;
             zone_state.next_min_expiration = None;
-            zone.mark_dirty(&mut zone_state, center);
 
             zone_state.policy.clone()
         };
@@ -270,7 +268,7 @@ impl ZoneServer {
         };
 
         let review = {
-            let zone_state = zone.state.lock().unwrap();
+            let zone_state = zone.read();
             let policy = zone_state.policy.as_ref().unwrap();
             match self.source {
                 Source::Unsigned => policy.loader.review.clone(),
@@ -321,7 +319,7 @@ impl ZoneServer {
         // not all components use these fields yet.  For now, they need to be
         // created over here -- hence 'or_insert_with()'.
         {
-            let mut zone_state = zone.state.lock().unwrap();
+            let mut zone_state = zone.write(center);
             match self.source {
                 Source::Unsigned => {
                     zone_state
@@ -452,7 +450,7 @@ impl ZoneServer {
                 );
 
                 {
-                    let mut zone_state = zone.state.lock().unwrap();
+                    let mut zone_state = zone.write(center);
                     match self.source {
                         Source::Unsigned => {
                             zone_state.unsigned.get_mut(&zone_serial).unwrap().review =
@@ -477,24 +475,12 @@ impl ZoneServer {
         zone_serial: Serial,
     ) {
         let _ = zone_serial; // TODO
-        let mut state = zone.state.lock().unwrap();
-        ZoneHandle {
-            zone,
-            state: &mut state,
-            center,
-        }
-        .approve_loaded();
+        zone.write_handle(center).get().approve_loaded();
     }
 
     fn on_signed_zone_approved(&self, center: &Arc<Center>, zone: &Arc<Zone>, zone_serial: Serial) {
         {
-            let mut state = zone.state.lock().unwrap();
-            ZoneHandle {
-                zone,
-                state: &mut state,
-                center,
-            }
-            .approve_signed();
+            zone.write_handle(center).get().approve_signed();
         }
 
         // Send a message to the zone signer to trigger a re-scan of
@@ -544,7 +530,7 @@ impl ZoneServer {
         match self.source {
             Source::Unsigned => {
                 {
-                    let mut zone_state = zone.state.lock().unwrap();
+                    let mut zone_state = zone.write(center);
                     let Some(version) = zone_state.unsigned.get_mut(&zone_serial) else {
                         // 'on_seek_approval_for_zone_cmd()' should have created
                         // this.  Since it doesn't exist, the zone is not under
@@ -578,19 +564,13 @@ impl ZoneServer {
                     );
 
                     // TODO: Whether to soft or hard reject should be part of the policy
-                    let mut state = zone.state.lock().unwrap();
-                    ZoneHandle {
-                        zone,
-                        state: &mut state,
-                        center,
-                    }
-                    .hard_reject_loaded();
+                    zone.write_handle(center).get().hard_reject_loaded();
                 }
             }
 
             Source::Signed => {
                 {
-                    let mut zone_state = zone.state.lock().unwrap();
+                    let mut zone_state = zone.write(center);
                     let Some(version) = zone_state.signed.get_mut(&zone_serial) else {
                         // 'on_seek_approval_for_zone_cmd()' should have created
                         // this.  Since it doesn't exist, the zone is not under
@@ -621,13 +601,7 @@ impl ZoneServer {
                         "Signed zone '{zone_name}' with serial {zone_serial} has been rejected."
                     );
                     // TODO: Whether to soft or hard reject should be part of the policy
-                    let mut state = zone.state.lock().unwrap();
-                    ZoneHandle {
-                        zone,
-                        state: &mut state,
-                        center,
-                    }
-                    .hard_reject_signed();
+                    zone.write_handle(center).get().hard_reject_signed();
                 }
             }
 

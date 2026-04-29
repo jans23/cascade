@@ -64,12 +64,7 @@ impl ZonePersistenceHandle<'_> {
                     }),
                     Err(_) => {
                         trace!("Abandoning loaded restoration");
-                        let mut state = zone.state.lock().unwrap();
-                        let mut handle = ZoneHandle {
-                            zone: &zone,
-                            state: &mut state,
-                            center: &center,
-                        };
+                        let mut handle = zone.write_handle(&center);
                         handle.storage().abandon_loaded_restoration(restorer);
                         handle.state.persistence.ongoing.finish();
                         return;
@@ -78,13 +73,9 @@ impl ZonePersistenceHandle<'_> {
 
                 // Obtain the signed zone restorer.
                 let mut restorer = {
-                    let mut state = zone.state.lock().unwrap();
-                    let mut handle = ZoneHandle {
-                        zone: &zone,
-                        state: &mut state,
-                        center: &center,
-                    };
-                    handle.storage().finish_loaded_restoration(restored)
+                    zone.write_handle(&center)
+                        .storage()
+                        .finish_loaded_restoration(restored)
                 };
 
                 // Try to restore the signed instance.
@@ -96,12 +87,7 @@ impl ZonePersistenceHandle<'_> {
                     }),
                     Err(_) => {
                         trace!("Abandoning signed restoration");
-                        let mut state = zone.state.lock().unwrap();
-                        let mut handle = ZoneHandle {
-                            zone: &zone,
-                            state: &mut state,
-                            center: &center,
-                        };
+                        let mut handle = zone.write_handle(&center);
                         handle.storage().abandon_signed_restoration(restorer);
                         handle.state.persistence.ongoing.finish();
                         return;
@@ -109,12 +95,7 @@ impl ZonePersistenceHandle<'_> {
                 };
 
                 info!("Restored the zone's persisted data");
-                let mut state = zone.state.lock().unwrap();
-                let mut handle = ZoneHandle {
-                    zone: &zone,
-                    state: &mut state,
-                    center: &center,
-                };
+                let mut handle = zone.write_handle(&center);
                 handle.storage().finish_signed_restoration(restored);
                 handle.state.persistence.ongoing.finish();
             });
@@ -144,15 +125,8 @@ impl ZonePersistenceHandle<'_> {
                 // NOTE: The outer function, which is spawning the background
                 // task, has a lock of the zone state. Thus, the following lock
                 // cannot be taken until the outer function terminates.
-                let mut state = zone.state.lock().unwrap();
-                let mut handle = ZoneHandle {
-                    zone: &zone,
-                    state: &mut state,
-                    center: &center,
-                };
-
-                handle.start_new_sign(persisted);
-
+                let mut handle = zone.write_handle(&center);
+                handle.get().start_new_sign(persisted);
                 handle.state.persistence.ongoing.finish();
             });
     }
@@ -181,14 +155,9 @@ impl ZonePersistenceHandle<'_> {
                 // NOTE: The outer function, which is spawning the background
                 // task, has a lock of the zone state. Thus, the following lock
                 // cannot be taken until the outer function terminates.
-                let mut state = zone.state.lock().unwrap();
-                let mut handle = ZoneHandle {
-                    zone: &zone,
-                    state: &mut state,
-                    center: &center,
-                };
+                let mut handle = zone.write_handle(&center);
 
-                handle.start_switch(persisted);
+                handle.get().start_switch(persisted);
 
                 handle.state.persistence.ongoing.finish();
             });

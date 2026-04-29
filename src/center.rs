@@ -106,7 +106,7 @@ pub async fn add_zone(
         // Create the zone and initialize its state.
         zone = Arc::new(Zone::new(name));
         {
-            let mut zone_state = zone.state.lock().unwrap();
+            let mut zone_state = zone.state.write_cleanly();
             let restorer = zone_state.storage.restorer.take().unwrap();
             zone_state.policy = Some(policy.latest.clone());
             policy.zones.insert(zone.name.clone());
@@ -150,7 +150,7 @@ pub async fn add_zone(
     }
 
     {
-        let mut state = zone.state.lock().unwrap();
+        let mut state = zone.write(center);
 
         state.record_event(HistoricalEvent::Added, None);
 
@@ -212,7 +212,7 @@ pub fn remove_zone(center: &Arc<Center>, name: Name<Bytes>) -> Result<(), ZoneRe
     SignedReviewServer::remove_zone(center, &zone);
     PublicationServer::remove_zone(center, &zone);
 
-    let mut zone_state = zone.state.lock().unwrap();
+    let mut zone_state = zone.state.write_cleanly();
 
     ZoneHandle {
         zone: &zone,
@@ -233,9 +233,14 @@ pub fn remove_zone(center: &Arc<Center>, name: Name<Bytes>) -> Result<(), ZoneRe
         state.mark_dirty(center);
     }
 
-    info!("Removed zone '{name}'");
+    // Persist the state file one last time.
     zone_state.record_event(HistoricalEvent::Removed, None);
-    zone.mark_dirty(&mut zone_state, center);
+    std::mem::drop(zone_state);
+    crate::zone::save_state_now(center, &zone);
+
+    // TODO: Remove the zone state file?
+
+    info!("Removed zone '{name}'");
     Ok(())
 }
 
