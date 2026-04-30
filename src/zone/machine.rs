@@ -1,5 +1,5 @@
 use cascade_api::ZoneReviewStatus;
-use cascade_zonedata::{LoadedZoneBuilder, LoadedZoneBuilt, SignedZoneBuilder};
+use domain::new::base::Serial;
 use tracing::{info, trace};
 
 use crate::{
@@ -100,7 +100,7 @@ impl ZoneStateMachine {
 
 /// # Initiating operations
 impl<'a> ZoneHandle<'a> {
-    pub(crate) fn try_start_load(&mut self) -> Option<LoadedZoneBuilder> {
+    pub(crate) fn try_start_load(&mut self) -> Option<cascade_zonedata::LoadedZoneBuilder> {
         // It's important that we first check the storage here instead of the
         // zone state machine. The reason is that while the zone state machine
         // is in the waiting state, the storage might still be persisting or
@@ -120,12 +120,14 @@ impl<'a> ZoneHandle<'a> {
 
         transition.move_to(ZoneStateMachine::Loading(waiting.start_load()));
 
+        self.state.instances.start_load();
+
         self.state.record_event(HistoricalEvent::StartedLoad, None);
 
         Some(builder)
     }
 
-    pub(crate) fn try_start_resign(&mut self) -> Option<SignedZoneBuilder> {
+    pub(crate) fn try_start_resign(&mut self) -> Option<cascade_zonedata::SignedZoneBuilder> {
         // It's important that we first check the storage here instead of the
         // zone state machine. The reason is that while the zone state machine
         // is in the waiting state, the storage might still be persisting or
@@ -146,6 +148,8 @@ impl<'a> ZoneHandle<'a> {
 
         transition.move_to(ZoneStateMachine::Signing(waiting.start_resign()));
 
+        self.state.instances.start_resign();
+
         self.state.record_event(HistoricalEvent::StartedLoad, None);
 
         Some(builder)
@@ -154,7 +158,7 @@ impl<'a> ZoneHandle<'a> {
 
 /// # Loading operations
 impl<'a> ZoneHandle<'a> {
-    pub(crate) fn abandon_load(&mut self, builder: LoadedZoneBuilder) {
+    pub(crate) fn abandon_load(&mut self, builder: cascade_zonedata::LoadedZoneBuilder) {
         let (transition, state) = self.state.machine.transition();
 
         let ZoneStateMachine::Loading(loaded) = state else {
@@ -164,9 +168,12 @@ impl<'a> ZoneHandle<'a> {
         transition.move_to(ZoneStateMachine::Waiting(loaded.abandon_load()));
 
         self.storage().abandon_load(builder);
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 
-    pub(crate) fn finish_load(&mut self, built: LoadedZoneBuilt) {
+    pub(crate) fn finish_load(&mut self, built: cascade_zonedata::LoadedZoneBuilt, serial: Serial) {
         let (transition, state) = self.state.machine.transition();
 
         let ZoneStateMachine::Loading(loaded) = state else {
@@ -176,6 +183,8 @@ impl<'a> ZoneHandle<'a> {
         transition.move_to(ZoneStateMachine::LoadedReview(loaded.finish_load()));
 
         self.storage().finish_load(built);
+
+        self.state.instances.finish_load(serial);
     }
 }
 
@@ -215,6 +224,9 @@ impl<'a> ZoneHandle<'a> {
         };
 
         transition.move_to(ZoneStateMachine::Waiting(loaded.soft_reject()));
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 
     pub(crate) fn hard_reject_loaded(&mut self) {
@@ -275,14 +287,17 @@ impl<'a> ZoneHandle<'a> {
         self.signer().enqueue_new_sign(builder);
     }
 
-    pub(crate) fn finish_signing(&mut self, built: cascade_zonedata::SignedZoneBuilt) {
+    pub(crate) fn finish_signing(
+        &mut self,
+        built: cascade_zonedata::SignedZoneBuilt,
+        serial: Serial,
+    ) {
         self.state.record_event(
             // TODO: Get the right trigger.
             HistoricalEvent::SigningSucceeded {
                 trigger: SigningTrigger::Load.into(),
             },
-            // TODO: Get the serial in here.
-            None,
+            Some(u32::from(serial).into()),
         );
 
         let (transition, state) = self.state.machine.transition();
@@ -294,10 +309,12 @@ impl<'a> ZoneHandle<'a> {
         transition.move_to(ZoneStateMachine::SignedReview(signing.finish_signing()));
 
         self.storage().finish_sign(built);
+
+        self.state.instances.finish_sign(serial);
     }
 
-    // Abandon the ongoing signing operation (but not due to failure).
-    pub(crate) fn abandon_signing(&mut self, builder: SignedZoneBuilder) {
+    /// Abandon the ongoing signing operation (but not due to failure).
+    pub(crate) fn abandon_signing(&mut self, builder: cascade_zonedata::SignedZoneBuilder) {
         let (transition, state) = self.state.machine.transition();
 
         let ZoneStateMachine::Signing(signing) = state else {
@@ -309,9 +326,16 @@ impl<'a> ZoneHandle<'a> {
         transition.move_to(ZoneStateMachine::Waiting(signing.abandon()));
 
         self.storage().abandon_sign(builder);
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 
-    pub(crate) fn signing_failed(&mut self, builder: SignedZoneBuilder, err: SignerError) {
+    pub(crate) fn signing_failed(
+        &mut self,
+        builder: cascade_zonedata::SignedZoneBuilder,
+        err: SignerError,
+    ) {
         let (transition, state) = self.state.machine.transition();
 
         let ZoneStateMachine::Signing(signing) = state else {
@@ -321,6 +345,9 @@ impl<'a> ZoneHandle<'a> {
         transition.move_to(ZoneStateMachine::SigningFailed(signing.signing_failed(err)));
 
         self.storage().abandon_sign(builder);
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 }
 
@@ -359,6 +386,9 @@ impl<'a> ZoneHandle<'a> {
         };
 
         transition.move_to(ZoneStateMachine::Waiting(signed.soft_reject()));
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 
     pub(crate) fn hard_reject_signed(&mut self) {
@@ -376,6 +406,9 @@ impl<'a> ZoneHandle<'a> {
         };
 
         transition.move_to(ZoneStateMachine::HaltSigned(review.hard_reject()));
+
+        // Abandon the entire upcoming instance.
+        self.state.instances.abandon();
     }
 }
 
@@ -401,6 +434,8 @@ impl<'a> ZoneHandle<'a> {
         };
         transition.move_to(ZoneStateMachine::Waiting(signed.approve()));
 
+        self.state.instances.switch();
+
         self.storage().start_cleanup(cleaner);
     }
 }
@@ -415,21 +450,24 @@ impl<'a> ZoneHandle<'a> {
                 let waiting = halt_loaded.reset();
                 transition.move_to(ZoneStateMachine::Waiting(waiting));
                 self.storage().abandon_loaded_review();
+                self.state.instances.abandon();
             }
             ZoneStateMachine::HaltSigned(halt_signed) => {
                 let waiting = halt_signed.reset();
                 transition.move_to(ZoneStateMachine::Waiting(waiting));
                 self.storage().abandon_signed_review();
+                self.state.instances.abandon();
             }
             ZoneStateMachine::SigningFailed(signing_failed) => {
                 let waiting = signing_failed.reset();
                 transition.move_to(ZoneStateMachine::Waiting(waiting));
+                self.state.instances.abandon();
             }
             _ => {
                 transition.move_to(state);
                 return Err(());
             }
-        };
+        }
 
         Ok(())
     }
