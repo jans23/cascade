@@ -136,6 +136,14 @@ impl HttpServer {
                 post(Self::reject_signed),
             )
             .route("/zone/{name}/signed/override", post(Self::override_signed))
+            .route(
+                "/zone/{zone}/manual-mode/enable",
+                post(Self::enable_manual_mode),
+            )
+            .route(
+                "/zone/{zone}/manual-mode/disable",
+                post(Self::disable_manual_mode),
+            )
             .route("/policy/", get(Self::policy_list))
             .route("/policy/reload", post(Self::policy_reload))
             .route("/policy/{name}", get(Self::policy_show))
@@ -362,6 +370,7 @@ impl HttpServer {
         let published_serial;
         let last_published;
         let error;
+        let manual_mode;
         {
             let locked_state = state.center.state.lock().unwrap();
             let keys_dir = &state.center.config.keys_dir;
@@ -514,6 +523,8 @@ impl HttpServer {
                 }
             }
             error = found_error;
+
+            manual_mode = zone_state.manual_mode;
         }
 
         // Query key status
@@ -623,6 +634,7 @@ impl HttpServer {
             source,
             policy,
             progress,
+            manual_mode,
             last_published,
             keys,
             key_status,
@@ -821,6 +833,37 @@ impl HttpServer {
         };
 
         Json(do_override())
+    }
+
+    async fn enable_manual_mode(
+        State(state): State<Arc<HttpServer>>,
+        Path(name): Path<Name<Bytes>>,
+    ) -> Json<ZoneManualModeResult> {
+        Json(Self::set_manual_mode(state, name, true))
+    }
+
+    async fn disable_manual_mode(
+        State(state): State<Arc<HttpServer>>,
+        Path(name): Path<Name<Bytes>>,
+    ) -> Json<ZoneManualModeResult> {
+        Json(Self::set_manual_mode(state, name, false))
+    }
+
+    fn set_manual_mode(
+        state: Arc<HttpServer>,
+        name: Name<Bytes>,
+        enable: bool,
+    ) -> ZoneManualModeResult {
+        let zone = center::get_zone(&state.center, &name).ok_or(ZoneManualModeError::NoSuchZone)?;
+
+        let mut zone_state = zone.state.lock().unwrap();
+
+        if zone_state.manual_mode == enable {
+            return Err(ZoneManualModeError::AlreadyInThatState);
+        }
+
+        zone_state.manual_mode = enable;
+        Ok(ZoneManualModeOutput { zone: name.clone() })
     }
 
     async fn policy_list(State(state): State<Arc<HttpServer>>) -> Json<PolicyListResult> {

@@ -130,6 +130,19 @@ pub enum ZoneCommand {
         /// The zone to report the history of.
         zone: ZoneName,
     },
+
+    /// Resume a paused zone pipeline
+    #[command(name = "manual-mode")]
+    ManualMode {
+        #[command(subcommand)]
+        manual_mode: ManualMode,
+    },
+}
+
+#[derive(Clone, Debug, clap::Subcommand)]
+pub enum ManualMode {
+    Enable { zone: ZoneName },
+    Disable { zone: ZoneName },
 }
 
 /// The stage to review a zone at.
@@ -522,6 +535,54 @@ impl Zone {
                     }
                 }
             }
+            ZoneCommand::ManualMode { manual_mode } => {
+                let (name, state) = match &manual_mode {
+                    ManualMode::Enable { zone } => (zone, "enable"),
+                    ManualMode::Disable { zone } => (zone, "disable"),
+                };
+                let url = format!("/zone/{name}/manual-mode/{state}");
+                let result: ZoneManualModeResult = client.post_json(&url).await?;
+
+                match result {
+                    Ok(_) => {
+                        if let ManualMode::Enable { .. } = manual_mode {
+                            println!(
+                                "Manual mode for zone `{name}` is now {}enabled{}",
+                                ansi::BOLD,
+                                ansi::RESET
+                            );
+                            println!("");
+                            println!(
+                                "Cascade will no longer automatically start new loading and signing operations"
+                            );
+                            println!(
+                                "Run {}`cascade zone manual-mode disable {name}`{} to continue automatic operation",
+                                ansi::BLUE,
+                                ansi::RESET,
+                            );
+                        } else {
+                            println!(
+                                "Manual mode for zone `{name}` is now {}disabled{}",
+                                ansi::BOLD,
+                                ansi::RESET
+                            );
+                            println!("");
+                            println!(
+                                "Cascade will automatically start new loading and signing operations when appropriate."
+                            );
+                        }
+                        Ok(())
+                    }
+                    Err(err) => match err {
+                        ZoneManualModeError::NoSuchZone => {
+                            Err(format!("zone `{name}` does not exist"))
+                        }
+                        ZoneManualModeError::AlreadyInThatState => Err(format!(
+                            "manual mode for zone `{name}` was already {state}d"
+                        )),
+                    },
+                }
+            }
         }
     }
 
@@ -593,6 +654,22 @@ impl Zone {
             println!("  {}ERROR: {error}{}", ansi::RED, ansi::RESET);
             println!(
                 "  Run {}`cascade zone history {}`{} for more information.",
+                ansi::BLUE,
+                zone.name,
+                ansi::RESET
+            );
+        }
+
+        if zone.manual_mode {
+            println!("");
+            println!(
+                "{}WARNING: This zone is in manual mode{}",
+                ansi::YELLOW,
+                ansi::RESET
+            );
+            println!("  Cascade will not automatically start new loading and signing operations");
+            println!(
+                "  Run {}`cascade zone manual-mode disable {}`{} to disable manual mode",
                 ansi::BLUE,
                 zone.name,
                 ansi::RESET
