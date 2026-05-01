@@ -591,7 +591,7 @@ pub struct Loading {}
 
 impl Loading {
     fn finish_load(self) -> LoadedReview {
-        LoadedReview {}
+        LoadedReview { decided: false }
     }
 
     fn abandon_load(self) -> Waiting {
@@ -599,8 +599,15 @@ impl Loading {
     }
 }
 
+/// An upcoming loaded instance is being reviewed.
 #[derive(Debug)]
-pub struct LoadedReview {}
+pub struct LoadedReview {
+    /// Whether a review decision has been received.
+    ///
+    /// If this is `true`, an approval/rejection for the zone has been received;
+    /// it is being processed.
+    pub decided: bool,
+}
 
 impl LoadedReview {
     fn approve(self) -> Signing {
@@ -634,7 +641,7 @@ pub struct Signing {}
 
 impl Signing {
     fn finish_signing(self) -> SignedReview {
-        SignedReview {}
+        SignedReview { decided: false }
     }
 
     /// Abandon the signing operation (but not due to failure).
@@ -658,8 +665,15 @@ impl SigningFailed {
     }
 }
 
+/// An upcoming signed instance is being reviewed.
 #[derive(Debug)]
-pub struct SignedReview {}
+pub struct SignedReview {
+    /// Whether a review decision has been received.
+    ///
+    /// If this is `true`, an approval/rejection for the zone has been received;
+    /// it is being processed.
+    pub decided: bool,
+}
 
 impl SignedReview {
     fn approve(self) -> Waiting {
