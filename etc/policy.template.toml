@@ -45,7 +45,7 @@ version = "v1"
 # until it is approved.  If it is 'false', loaded zones will be signed
 # immediately.  At the moment, the review hook will only be run if this is set
 # to true.
-required = false
+mode = "off"
 
 # A hook for reviewing a loaded zone.
 #
@@ -354,7 +354,7 @@ type = "nsec"
 # If this is 'true', a signed version of a zone will not be published until it
 # is approved.  If it is 'false', signed zones will be published immediately.
 # At the moment, the review hook will only be run if this is set to true.
-required = false
+mode = "off"
 
 # A hook for reviewing a signed zone.
 #
